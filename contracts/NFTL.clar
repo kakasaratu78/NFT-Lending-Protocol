@@ -5,6 +5,7 @@
 (define-constant ERR-INVALID-AMOUNT (err u101))
 (define-constant ERR-LOAN-EXISTS (err u102))
 (define-constant ERR-NO-LOAN-FOUND (err u103))
+(define-constant ERR-LOAN-NOT-EXPIRED (err u104))
 
 ;; Data Variables
 (define-map loans
@@ -85,3 +86,27 @@
     (+ (get loan-amount loan) interest-amount)
   )
 )
+
+
+
+;; Add to constants
+(define-constant LIQUIDATION-THRESHOLD u120) ;; 120% of loan value
+
+;; Add to public functions
+(define-public (liquidate-loan (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (current-block stacks-block-height)
+      (loan-end-block (+ (get start-block loan) (get duration loan)))
+    )
+    (asserts! (> current-block loan-end-block) ERR-LOAN-NOT-EXPIRED)
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan { status: "LIQUIDATED" })
+    )
+    (ok true)
+  )
+)
+
+
