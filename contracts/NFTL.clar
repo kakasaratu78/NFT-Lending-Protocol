@@ -177,3 +177,18 @@
     (ok true)
   )
 )
+
+
+(define-public (transfer-loan (loan-id uint) (new-borrower principal))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan { borrower: new-borrower })
+    )
+    (ok true)
+  )
+)
