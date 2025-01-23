@@ -138,3 +138,20 @@
     (+ market-rate (get-market-volatility))
   )
 )
+
+
+
+(define-public (extend-loan-duration (loan-id uint) (additional-blocks uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (new-duration (+ (get duration loan) additional-blocks))
+    )
+    (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan { duration: new-duration })
+    )
+    (ok true)
+  )
+)
