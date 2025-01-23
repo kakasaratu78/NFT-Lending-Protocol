@@ -155,3 +155,25 @@
     (ok true)
   )
 )
+
+
+
+(define-map partial-repayments
+  { loan-id: uint }
+  { amount-paid: uint }
+)
+
+(define-public (make-partial-repayment (loan-id uint) (amount uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (current-paid (default-to u0 (get amount-paid (map-get? partial-repayments { loan-id: loan-id }))))
+    )
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (map-set partial-repayments
+      { loan-id: loan-id }
+      { amount-paid: (+ current-paid amount) }
+    )
+    (ok true)
+  )
+)
