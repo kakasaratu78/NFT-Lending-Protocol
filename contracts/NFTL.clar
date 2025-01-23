@@ -6,6 +6,7 @@
 (define-constant ERR-LOAN-EXISTS (err u102))
 (define-constant ERR-NO-LOAN-FOUND (err u103))
 (define-constant ERR-LOAN-NOT-EXPIRED (err u104))
+(define-constant ERR-CONTRACT-PAUSED (err u105))
 
 ;; Data Variables
 (define-map loans
@@ -36,6 +37,8 @@
       (interest-rate (calculate-interest-rate nft-id))
     )
     ;; (try! (nft-transfer? nft-id tx-sender (as-contract tx-sender)))
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+
     (map-set loans
       { loan-id: loan-id }
       {
@@ -60,6 +63,7 @@
       (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
       (total-amount (calculate-repayment-amount loan-id))
     )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
     (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
     (try! (stx-transfer? total-amount tx-sender (as-contract tx-sender)))
     ;; (try! (nft-transfer? (get nft-id loan) (as-contract tx-sender) tx-sender))
@@ -100,6 +104,7 @@
       (current-block stacks-block-height)
       (loan-end-block (+ (get start-block loan) (get duration loan)))
     )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
     (asserts! (> current-block loan-end-block) ERR-LOAN-NOT-EXPIRED)
     (map-set loans
       { loan-id: loan-id }
@@ -135,6 +140,7 @@
       (collection-id (get-collection-id nft-id))
       (market-rate (default-to u10 (get base-rate (map-get? nft-collection-rates { collection-id: collection-id }))))
     )
+    
     (+ market-rate (get-market-volatility))
   )
 )
@@ -148,6 +154,8 @@
       (new-duration (+ (get duration loan) additional-blocks))
     )
     (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+
     (map-set loans
       { loan-id: loan-id }
       (merge loan { duration: new-duration })
@@ -164,12 +172,15 @@
 )
 
 (define-public (make-partial-repayment (loan-id uint) (amount uint))
+
   (let
     (
       (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
       (current-paid (default-to u0 (get amount-paid (map-get? partial-repayments { loan-id: loan-id }))))
     )
     (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+
     (map-set partial-repayments
       { loan-id: loan-id }
       { amount-paid: (+ current-paid amount) }
@@ -184,6 +195,7 @@
     (
       (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
     )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
     (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
     (map-set loans
       { loan-id: loan-id }
@@ -192,3 +204,17 @@
     (ok true)
   )
 )
+
+
+;; Add to data variables
+(define-data-var contract-paused bool false)
+(define-data-var contract-owner principal tx-sender)
+
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (ok (var-set contract-paused (not (var-get contract-paused))))
+  )
+)
+
