@@ -110,3 +110,31 @@
 )
 
 
+;; Add to data variables
+(define-map nft-collection-rates
+  { collection-id: uint }
+  { base-rate: uint }
+)
+
+;; Helper function to get collection ID from NFT ID
+(define-private (get-collection-id (nft-id uint))
+  ;; For MVP, returning a default collection ID of 1
+  u1
+)
+
+;; Helper function to get market volatility
+(define-private (get-market-volatility)
+  ;; For MVP, returning a fixed volatility rate of 2%
+  u2
+)
+
+;; New function
+(define-read-only (get-dynamic-interest-rate (nft-id uint))
+  (let
+    (
+      (collection-id (get-collection-id nft-id))
+      (market-rate (default-to u10 (get base-rate (map-get? nft-collection-rates { collection-id: collection-id }))))
+    )
+    (+ market-rate (get-market-volatility))
+  )
+)
