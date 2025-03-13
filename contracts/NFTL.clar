@@ -360,3 +360,243 @@
     (ok true)
   )
 )
+
+
+;; Add to data variables
+(define-map auctions 
+    { loan-id: uint }
+    { 
+        highest-bid: uint,
+        highest-bidder: principal,
+        end-block: uint,
+        active: bool 
+    }
+)
+
+(define-public (start-auction (loan-id uint) (duration uint) (starting-bid uint))
+    (let (
+        (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+        (end-block (+ stacks-block-height duration))
+    )
+        (map-set auctions
+            { loan-id: loan-id }
+            {
+                highest-bid: starting-bid,
+                highest-bidder: tx-sender,
+                end-block: end-block,
+                active: true
+            }
+        )
+        (ok true)
+    )
+)
+
+
+;; Add to data variables
+(define-map user-points 
+    { user: principal }
+    { points: uint }
+)
+
+(define-public (award-points (user principal) (amount uint))
+    (let (
+        (current-points (default-to { points: u0 } (map-get? user-points { user: user })))
+    )
+        (map-set user-points
+            { user: user }
+            { points: (+ (get points current-points) amount) }
+        )
+        (ok true)
+    )
+)
+
+
+(define-public (redeem-points (amount uint))
+    (let (
+        (current-points (default-to { points: u0 } (map-get? user-points { user: tx-sender })))
+    )
+        (asserts! (>= (get points current-points) amount) ERR-INVALID-AMOUNT)
+        (map-set user-points
+            { user: tx-sender }
+            { points: (- (get points current-points) amount) }
+        )
+        (ok true)
+    )
+)
+
+
+;; Add to data variables
+(define-map referrals
+    { referrer: principal }
+    { referral-count: uint, total-rewards: uint }
+)
+
+(define-public (register-referral (referrer principal))
+    (let (
+        (current-stats (default-to { referral-count: u0, total-rewards: u0 } 
+            (map-get? referrals { referrer: referrer })))
+    )
+        (map-set referrals
+            { referrer: referrer }
+            {
+                referral-count: (+ (get referral-count current-stats) u1),
+                total-rewards: (+ (get total-rewards current-stats) u100)
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-public (get-referral-stats (referrer principal))
+    (let (
+        (stats (default-to { referral-count: u0, total-rewards: u0 } 
+            (map-get? referrals { referrer: referrer })))
+    )
+        (ok stats)
+    )
+)
+
+;; Add to data variables
+(define-map loan-ratings
+    { loan-id: uint }
+    { risk-score: uint, rating: (string-ascii 2) }
+)
+
+(define-public (set-loan-rating (loan-id uint) (risk-score uint))
+    (let (
+        (rating (if (< risk-score u30) "A+"
+                (if (< risk-score u50) "B+"
+                (if (< risk-score u70) "C+" "D+"))))
+    )
+        (map-set loan-ratings
+            { loan-id: loan-id }
+            { 
+                risk-score: risk-score,
+                rating: rating
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-public (get-loan-rating (loan-id uint))
+    (let (
+        (rating (unwrap! (map-get? loan-ratings { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+    )
+        (ok rating)
+    )
+)
+
+
+(define-public (get-loan-risk-score (loan-id uint))
+    (let (
+        (rating (unwrap! (map-get? loan-ratings { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+    )
+        (ok (get risk-score rating))
+    )
+)
+
+
+;; Add to data variables
+(define-map staked-loans
+    { staker: principal }
+    { amount: uint, start-block: uint }
+)
+
+(define-public (stake-loan (loan-id uint))
+    (let (
+        (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+        (map-set staked-loans
+            { staker: tx-sender }
+            {
+                amount: (get loan-amount loan),
+                start-block: stacks-block-height
+            }
+        )
+        (ok true)
+    )
+)
+
+
+;; Add to data variables
+(define-map vip-status
+    { borrower: principal }
+    { 
+        tier: uint,
+        discount-rate: uint,
+        expiry: uint 
+    }
+)
+
+(define-public (grant-vip-status (borrower principal) (tier uint))
+    (let (
+        (discount-rate (if (is-eq tier u1) u5
+                        (if (is-eq tier u2) u10 u15)))
+    )
+        (map-set vip-status
+            { borrower: borrower }
+            {
+                tier: tier,
+                discount-rate: discount-rate,
+                expiry: (+ stacks-block-height u50000)
+            }
+        )
+        (ok true)
+    )
+)
+
+
+;; Add to data variables
+(define-map flash-loans
+    { loan-id: uint }
+    { amount: uint, block: uint }
+)
+
+(define-public (execute-flash-loan (amount uint))
+    (let (
+        (loan-id (+ (var-get loan-nonce) u1))
+    )
+        (map-set flash-loans
+            { loan-id: loan-id }
+            {
+                amount: amount,
+                block: stacks-block-height
+            }
+        )
+        (try! (stx-transfer? amount (as-contract tx-sender) tx-sender))
+        (var-set loan-nonce loan-id)
+        (ok loan-id)
+    )
+)
+
+
+
+;; Add to data variables
+(define-map collateral-swaps
+    { loan-id: uint }
+    { 
+        original-nft: uint,
+        new-nft: uint,
+        swap-block: uint 
+    }
+)
+
+(define-public (swap-collateral (loan-id uint) (new-nft-id uint))
+    (let (
+        (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+        (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+        (map-set collateral-swaps
+            { loan-id: loan-id }
+            {
+                original-nft: (get nft-id loan),
+                new-nft: new-nft-id,
+                swap-block: stacks-block-height
+            }
+        )
+        (ok true)
+    )
+)
