@@ -600,3 +600,358 @@
         (ok true)
     )
 )
+
+
+(define-map multi-collateral-loans
+  { loan-id: uint }
+  { nft-ids: (list 10 uint) }
+)
+
+(define-public (create-multi-collateral-loan (nft-ids (list 10 uint)) (amount uint) (duration uint))
+  (let
+    (
+      (loan-id (+ (var-get loan-nonce) u1))
+      (interest-rate (calculate-interest-rate (unwrap-panic (element-at nft-ids u0))))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    
+    (map-set loans
+      { loan-id: loan-id }
+      {
+        borrower: tx-sender,
+        nft-id: (unwrap-panic (element-at nft-ids u0)),
+        loan-amount: amount,
+        interest-rate: interest-rate,
+        start-block: stacks-block-height,
+        duration: duration,
+        status: "ACTIVE"
+      }
+    )
+    
+    (map-set multi-collateral-loans
+      { loan-id: loan-id }
+      { nft-ids: nft-ids }
+    )
+    
+    (var-set loan-nonce loan-id)
+    (try! (stx-transfer? amount (as-contract tx-sender) tx-sender))
+    (ok loan-id)
+  )
+)
+
+
+(define-map loan-listings
+  { loan-id: uint }
+  { 
+    seller: principal,
+    price: uint,
+    active: bool
+  }
+)
+
+(define-public (list-loan-for-sale (loan-id uint) (price uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status loan) "ACTIVE") ERR-INVALID-REFINANCE)
+    
+    (map-set loan-listings
+      { loan-id: loan-id }
+      {
+        seller: tx-sender,
+        price: price,
+        active: true
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (buy-listed-loan (loan-id uint))
+  (let
+    (
+      (listing (unwrap! (map-get? loan-listings { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (get active listing) ERR-NO-LOAN-FOUND)
+    
+    (try! (stx-transfer? (get price listing) tx-sender (get seller listing)))
+    
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan { borrower: tx-sender })
+    )
+    
+    (map-set loan-listings
+      { loan-id: loan-id }
+      (merge listing { active: false })
+    )
+    
+    (ok true)
+  )
+)
+
+
+(define-map bundle-shares
+  { bundle-id: uint, investor: principal }
+  { share-amount: uint }
+)
+
+(define-map bundle-total-shares
+  { bundle-id: uint }
+  { total-shares: uint, price-per-share: uint }
+)
+
+(define-public (create-bundle-shares (bundle-id uint) (total-shares uint) (price-per-share uint))
+  (let
+    (
+      (bundle (unwrap! (map-get? loan-bundles { bundle-id: bundle-id }) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get owner bundle) tx-sender) ERR-NOT-AUTHORIZED)
+    
+    (map-set bundle-total-shares
+      { bundle-id: bundle-id }
+      { 
+        total-shares: total-shares,
+        price-per-share: price-per-share
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (buy-bundle-shares (bundle-id uint) (share-amount uint))
+  (let
+    (
+      (bundle-info (unwrap! (map-get? bundle-total-shares { bundle-id: bundle-id }) ERR-NO-LOAN-FOUND))
+      (current-shares (default-to u0 (get share-amount (map-get? bundle-shares { bundle-id: bundle-id, investor: tx-sender }))))
+      (total-cost (* share-amount (get price-per-share bundle-info)))
+      (bundle (unwrap! (map-get? loan-bundles { bundle-id: bundle-id }) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (<= (+ current-shares share-amount) (get total-shares bundle-info)) ERR-INVALID-AMOUNT)
+    
+    (try! (stx-transfer? total-cost tx-sender (get owner bundle)))
+    
+    (map-set bundle-shares
+      { bundle-id: bundle-id, investor: tx-sender }
+      { share-amount: (+ current-shares share-amount) }
+    )
+    (ok true)
+  )
+)
+
+
+
+(define-map governance-proposals
+  { proposal-id: uint }
+  {
+    proposer: principal,
+    description: (string-ascii 100),
+    votes-for: uint,
+    votes-against: uint,
+    status: (string-ascii 10),
+    end-block: uint
+  }
+)
+
+(define-map votes
+  { proposal-id: uint, voter: principal }
+  { voted: bool }
+)
+
+(define-data-var proposal-nonce uint u0)
+
+(define-public (create-proposal (description (string-ascii 100)) (voting-period uint))
+  (let
+    (
+      (proposal-id (+ (var-get proposal-nonce) u1))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      {
+        proposer: tx-sender,
+        description: description,
+        votes-for: u0,
+        votes-against: u0,
+        status: "ACTIVE",
+        end-block: (+ stacks-block-height voting-period)
+      }
+    )
+    
+    (var-set proposal-nonce proposal-id)
+    (ok proposal-id)
+  )
+)
+
+(define-public (vote-on-proposal (proposal-id uint) (vote-for bool))
+  (let
+    (
+      (proposal (unwrap! (map-get? governance-proposals { proposal-id: proposal-id }) ERR-NO-LOAN-FOUND))
+      (has-voted (default-to { voted: false } (map-get? votes { proposal-id: proposal-id, voter: tx-sender })))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get status proposal) "ACTIVE") ERR-INVALID-REFINANCE)
+    (asserts! (< stacks-block-height (get end-block proposal)) ERR-LOAN-NOT-EXPIRED)
+    (asserts! (not (get voted has-voted)) ERR-NOT-AUTHORIZED)
+    
+    (map-set votes
+      { proposal-id: proposal-id, voter: tx-sender }
+      { voted: true }
+    )
+    
+    (if vote-for
+      (map-set governance-proposals
+        { proposal-id: proposal-id }
+        (merge proposal { votes-for: (+ (get votes-for proposal) u1) })
+      )
+      (map-set governance-proposals
+        { proposal-id: proposal-id }
+        (merge proposal { votes-against: (+ (get votes-against proposal) u1) })
+      )
+    )
+    
+    (ok true)
+  )
+)
+
+(define-public (finalize-proposal (proposal-id uint))
+  (let
+    (
+      (proposal (unwrap! (map-get? governance-proposals { proposal-id: proposal-id }) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get status proposal) "ACTIVE") ERR-INVALID-REFINANCE)
+    (asserts! (>= stacks-block-height (get end-block proposal)) ERR-LOAN-NOT-EXPIRED)
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      (merge proposal { 
+        status: (if (> (get votes-for proposal) (get votes-against proposal)) "PASSED" "REJECTED") 
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+
+(define-map loan-delegates
+  { loan-id: uint }
+  { delegate: principal }
+)
+
+(define-public (delegate-loan (loan-id uint) (delegate-address principal))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    
+    (map-set loan-delegates
+      { loan-id: loan-id }
+      { delegate: delegate-address }
+    )
+    (ok true)
+  )
+)
+
+(define-public (delegate-repay-loan (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (delegate-info (unwrap! (map-get? loan-delegates { loan-id: loan-id }) ERR-NOT-AUTHORIZED))
+      (total-amount (calculate-repayment-amount loan-id))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (is-eq (get delegate delegate-info) tx-sender) ERR-NOT-AUTHORIZED)
+    
+    (try! (stx-transfer? total-amount tx-sender (as-contract tx-sender)))
+    
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan { status: "REPAID" })
+    )
+    (ok true)
+  )
+)
+
+
+
+(define-map loan-health
+  { loan-id: uint }
+  { 
+    health-factor: uint,
+    last-checked: uint,
+    warnings-sent: uint
+  }
+)
+
+(define-constant HEALTH_EXCELLENT u100)
+(define-constant HEALTH_GOOD u80)
+(define-constant HEALTH_WARNING u60)
+(define-constant HEALTH_DANGER u40)
+(define-constant HEALTH_CRITICAL u20)
+
+(define-public (update-loan-health (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (current-health (default-to { health-factor: u100, last-checked: u0, warnings-sent: u0 } 
+                      (map-get? loan-health { loan-id: loan-id })))
+      (blocks-elapsed (- stacks-block-height (get start-block loan)))
+      (blocks-total (get duration loan))
+      (time-factor (if (> blocks-total u0) 
+                      (/ (* blocks-elapsed u100) blocks-total)
+                      u100))
+      (new-health-factor (- u100 time-factor))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    
+    (map-set loan-health
+      { loan-id: loan-id }
+      { 
+        health-factor: new-health-factor,
+        last-checked: stacks-block-height,
+        warnings-sent: (if (< new-health-factor HEALTH_WARNING) 
+                          (+ (get warnings-sent current-health) u1)
+                          (get warnings-sent current-health))
+      }
+    )
+    (ok new-health-factor)
+  )
+)
+
+(define-read-only (get-loan-health-status (loan-id uint))
+  (let
+    (
+      (health (default-to { health-factor: u0, last-checked: u0, warnings-sent: u0 } 
+              (map-get? loan-health { loan-id: loan-id })))
+      (health-factor (get health-factor health))
+    )
+    (if (>= health-factor HEALTH_EXCELLENT) 
+      (ok "EXCELLENT")
+      (if (>= health-factor HEALTH_GOOD)
+        (ok "GOOD")
+        (if (>= health-factor HEALTH_WARNING)
+          (ok "WARNING")
+          (if (>= health-factor HEALTH_DANGER)
+            (ok "DANGER")
+            (ok "CRITICAL")
+          )
+        )
+      )
+    )
+  )
+)
+
+
+
