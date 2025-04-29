@@ -218,3 +218,145 @@
   )
 )
 
+
+;; Add to data variables
+(define-map emergency-contacts 
+  { user: principal }
+  { backup: principal }
+)
+
+(define-public (set-emergency-contact (backup-address principal))
+  (begin
+    (map-set emergency-contacts
+      { user: tx-sender }
+      { backup: backup-address }
+    )
+    (ok true)
+  )
+)
+
+(define-public (emergency-withdraw (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (emergency-contact (unwrap! (map-get? emergency-contacts { user: (get borrower loan) }) ERR-NOT-AUTHORIZED))
+    )
+    (asserts! (is-eq tx-sender (get backup emergency-contact)) ERR-NOT-AUTHORIZED)
+    (try! (stx-transfer? (get loan-amount loan) (as-contract tx-sender) tx-sender))
+    (ok true)
+  )
+)
+
+
+(define-constant ERR-INVALID-REFINANCE (err u106))
+
+(define-public (refinance-loan (loan-id uint) (new-duration uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (new-interest-rate (calculate-interest-rate (get nft-id loan)))
+    )
+    (asserts! (is-eq (get borrower loan) tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status loan) "ACTIVE") ERR-INVALID-REFINANCE)
+    
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan 
+        { 
+          interest-rate: new-interest-rate,
+          duration: new-duration,
+          start-block: stacks-block-height
+        }
+      )
+    )
+    (ok true)
+  )
+)
+
+
+
+(define-map nft-valuations
+  { collection-id: uint }
+  { floor-price: uint }
+)
+
+(define-read-only (get-nft-valuation (nft-id uint))
+  (let
+    (
+      (collection-id (get-collection-id nft-id))
+      (floor-price (default-to u0 (get floor-price (map-get? nft-valuations { collection-id: collection-id }))))
+    )
+    (ok floor-price)
+  )
+)
+
+(define-public (update-floor-price (collection-id uint) (new-price uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (map-set nft-valuations
+      { collection-id: collection-id }
+      { floor-price: new-price }
+    )
+    (ok true)
+  )
+)
+
+
+
+(define-public (set-base-rate (collection-id uint) (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (map-set nft-collection-rates
+      { collection-id: collection-id }
+      { base-rate: new-rate }
+    )
+    (ok true)
+  )
+)
+
+
+(define-map loan-bundles
+  { bundle-id: uint }
+  { loan-ids: (list 10 uint), owner: principal }
+)
+
+(define-data-var bundle-nonce uint u0)
+
+(define-public (create-loan-bundle (loan-ids (list 10 uint)))
+  (let
+    (
+      (bundle-id (+ (var-get bundle-nonce) u1))
+    )
+    (var-set bundle-nonce bundle-id)
+    (map-set loan-bundles
+      { bundle-id: bundle-id }
+      { loan-ids: loan-ids, owner: tx-sender }
+    )
+    (ok bundle-id)
+  )
+)
+
+
+
+(define-map insurance-pool
+  { participant: principal }
+  { amount: uint, active: bool }
+)
+
+(define-data-var total-insurance-pool uint u0)
+
+(define-public (join-insurance-pool (amount uint))
+  (let
+    (
+      (current-pool (default-to { amount: u0, active: false } 
+        (map-get? insurance-pool { participant: tx-sender })))
+    )
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (var-set total-insurance-pool (+ (var-get total-insurance-pool) amount))
+    (map-set insurance-pool
+      { participant: tx-sender }
+      { amount: (+ (get amount current-pool) amount), active: true }
+    )
+    (ok true)
+  )
+)
