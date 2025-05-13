@@ -955,3 +955,158 @@
 
 
 
+(define-map loan-participations
+    { loan-id: uint, participant: principal }
+    { amount: uint, share-percentage: uint }
+)
+
+(define-map pool-totals
+    { loan-id: uint }
+    { total-participants: uint, total-amount: uint }
+)
+
+(define-public (participate-in-loan (loan-id uint) (amount uint))
+    (let
+        (
+            (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+            (pool-total (default-to { total-participants: u0, total-amount: u0 } 
+                (map-get? pool-totals { loan-id: loan-id })))
+            (share-percentage (/ (* amount u100) (get loan-amount loan)))
+        )
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        
+        (map-set loan-participations
+            { loan-id: loan-id, participant: tx-sender }
+            { amount: amount, share-percentage: share-percentage }
+        )
+        
+        (map-set pool-totals
+            { loan-id: loan-id }
+            {
+                total-participants: (+ (get total-participants pool-total) u1),
+                total-amount: (+ (get total-amount pool-total) amount)
+            }
+        )
+        (ok share-percentage)
+    )
+)
+
+(define-public (get-participation-info (loan-id uint))
+    (let
+        (
+            (participation (unwrap! (map-get? loan-participations { loan-id: loan-id, participant: tx-sender }) ERR-NO-LOAN-FOUND))
+        )
+        (ok participation)
+    )
+)
+(define-public (get-pool-total (loan-id uint))
+    (let
+        (
+            (pool-total (unwrap! (map-get? pool-totals { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+        )
+        (ok pool-total)
+    )
+)
+(define-public (get-participant-share (loan-id uint))
+    (let
+        (
+            (participation (unwrap! (map-get? loan-participations { loan-id: loan-id, participant: tx-sender }) ERR-NO-LOAN-FOUND))
+            (pool-total (unwrap! (map-get? pool-totals { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+        )
+        (ok (/ (* (get amount participation) u100) (get total-amount pool-total)))
+    )
+)
+(define-public (withdraw-participation (loan-id uint))
+    (let
+        (
+            (participation (unwrap! (map-get? loan-participations { loan-id: loan-id, participant: tx-sender }) ERR-NO-LOAN-FOUND))
+            (pool-total (unwrap! (map-get? pool-totals { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+        )
+        (try! (stx-transfer? (get amount participation) tx-sender (as-contract tx-sender)))
+        
+        (map-set pool-totals
+            { loan-id: loan-id }
+            {
+                total-participants: (- (get total-participants pool-total) u1),
+                total-amount: (- (get total-amount pool-total) (get amount participation))
+            }
+        )
+        
+        (map-set loan-participations
+            { loan-id: loan-id, participant: tx-sender }
+            { amount: u0, share-percentage: u0 }
+        )
+        (ok true)
+    )
+)
+(define-public (get-participant-amount (loan-id uint))
+    (let
+        (
+            (participation (unwrap! (map-get? loan-participations { loan-id: loan-id, participant: tx-sender }) ERR-NO-LOAN-FOUND))
+        )
+        (ok (get amount participation))
+    )
+)
+(define-public (get-participant-share-percentage (loan-id uint))
+    (let
+        (
+            (participation (unwrap! (map-get? loan-participations { loan-id: loan-id, participant: tx-sender }) ERR-NO-LOAN-FOUND))
+        )
+        (ok (get share-percentage participation))
+    )
+)
+(define-public (get-participant-count (loan-id uint))
+    (let
+        (
+            (pool-total (unwrap! (map-get? pool-totals { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+        )
+        (ok (get total-participants pool-total))
+    )
+)
+(define-public (get-participant-total-amount (loan-id uint))
+    (let
+        (
+            (pool-total (unwrap! (map-get? pool-totals { loan-id: loan-id }) ERR-NO-LOAN-FOUND))
+        )
+        (ok (get total-amount pool-total))
+    )
+)
+
+
+(define-map price-feeds
+    { feed-id: uint }
+    { provider: principal, weight: uint }
+)
+
+(define-map nft-price-submissions
+    { nft-id: uint, feed-id: uint }
+    { price: uint, timestamp: uint }
+)
+
+(define-data-var total-feeds uint u0)
+
+(define-public (submit-price-feed (nft-id uint) (price uint))
+    (let
+        (
+            (feed-info (unwrap! (map-get? price-feeds { feed-id: (var-get total-feeds) }) 
+                ERR-NOT-AUTHORIZED))
+        )
+        (asserts! (is-eq tx-sender (get provider feed-info)) ERR-NOT-AUTHORIZED)
+        
+        (map-set nft-price-submissions
+            { nft-id: nft-id, feed-id: (var-get total-feeds) }
+            { price: price, timestamp: stacks-block-height }
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (get-weighted-price (nft-id uint))
+    (let
+        (
+            (total-weight u0)
+            (weighted-sum u0)
+        )
+        (ok (/ weighted-sum total-weight))
+    )
+)
