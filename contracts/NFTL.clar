@@ -1110,3 +1110,190 @@
         (ok (/ weighted-sum total-weight))
     )
 )
+
+(define-map auto-renewal-settings
+  { borrower: principal }
+  { 
+    enabled: bool,
+    max-renewals: uint,
+    max-interest-increase: uint,
+    min-health-factor: uint
+  }
+)
+
+(define-map loan-renewal-history
+  { loan-id: uint }
+  { 
+    renewal-count: uint,
+    last-renewal-block: uint,
+    original-terms: { amount: uint, rate: uint, duration: uint }
+  }
+)
+
+(define-data-var renewal-fee uint u50)
+(define-data-var max-auto-renewals uint u5)
+
+(define-public (enable-auto-renewal (max-renewals uint) (max-interest-increase uint) (min-health-factor uint))
+  (begin
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (<= max-renewals (var-get max-auto-renewals)) ERR-INVALID-AMOUNT)
+    (asserts! (<= max-interest-increase u50) ERR-INVALID-AMOUNT)
+    (asserts! (>= min-health-factor u20) ERR-INVALID-AMOUNT)
+    
+    (map-set auto-renewal-settings
+      { borrower: tx-sender }
+      {
+        enabled: true,
+        max-renewals: max-renewals,
+        max-interest-increase: max-interest-increase,
+        min-health-factor: min-health-factor
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (disable-auto-renewal)
+  (begin
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    
+    (map-set auto-renewal-settings
+      { borrower: tx-sender }
+      {
+        enabled: false,
+        max-renewals: u0,
+        max-interest-increase: u0,
+        min-health-factor: u0
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (process-auto-renewal (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (borrower (get borrower loan))
+      (renewal-settings (unwrap! (map-get? auto-renewal-settings { borrower: borrower }) ERR-NOT-AUTHORIZED))
+      (renewal-history (default-to 
+        { renewal-count: u0, last-renewal-block: u0, original-terms: { amount: u0, rate: u0, duration: u0 } }
+        (map-get? loan-renewal-history { loan-id: loan-id })))
+      (current-block stacks-block-height)
+      (loan-end-block (+ (get start-block loan) (get duration loan)))
+      (blocks-until-expiry (- loan-end-block current-block))
+      (new-interest-rate (+ (get interest-rate loan) u2))
+      (interest-increase (- new-interest-rate (get interest-rate loan)))
+      (renewal-fee-amount (var-get renewal-fee))
+    )
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (asserts! (get enabled renewal-settings) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status loan) "ACTIVE") ERR-INVALID-REFINANCE)
+    (asserts! (<= blocks-until-expiry u1000) ERR-LOAN-NOT-EXPIRED)
+    (asserts! (< (get renewal-count renewal-history) (get max-renewals renewal-settings)) ERR-INVALID-AMOUNT)
+    (asserts! (<= interest-increase (get max-interest-increase renewal-settings)) ERR-INVALID-AMOUNT)
+    
+    (try! (stx-transfer? renewal-fee-amount (as-contract tx-sender) tx-sender))
+    
+    (if (is-eq (get renewal-count renewal-history) u0)
+      (map-set loan-renewal-history
+        { loan-id: loan-id }
+        {
+          renewal-count: u1,
+          last-renewal-block: current-block,
+          original-terms: {
+            amount: (get loan-amount loan),
+            rate: (get interest-rate loan),
+            duration: (get duration loan)
+          }
+        }
+      )
+      (map-set loan-renewal-history
+        { loan-id: loan-id }
+        (merge renewal-history {
+          renewal-count: (+ (get renewal-count renewal-history) u1),
+          last-renewal-block: current-block
+        })
+      )
+    )
+    
+    (map-set loans
+      { loan-id: loan-id }
+      (merge loan {
+        interest-rate: new-interest-rate,
+        start-block: current-block,
+        duration: (get duration loan)
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+(define-public (batch-process-renewals (loan-ids (list 20 uint)))
+  (begin
+    (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+    (ok (map process-auto-renewal loan-ids))
+  )
+)
+
+(define-read-only (get-renewal-settings (borrower principal))
+  (map-get? auto-renewal-settings { borrower: borrower })
+)
+
+(define-read-only (get-renewal-history (loan-id uint))
+  (map-get? loan-renewal-history { loan-id: loan-id })
+)
+
+(define-read-only (check-renewal-eligibility (loan-id uint))
+  (let
+    (
+      (loan (unwrap! (get-loan loan-id) ERR-NO-LOAN-FOUND))
+      (borrower (get borrower loan))
+      (renewal-settings (unwrap! (map-get? auto-renewal-settings { borrower: borrower }) ERR-NOT-AUTHORIZED))
+      (renewal-history (default-to 
+        { renewal-count: u0, last-renewal-block: u0, original-terms: { amount: u0, rate: u0, duration: u0 } }
+        (map-get? loan-renewal-history { loan-id: loan-id })))
+      (current-block stacks-block-height)
+      (loan-end-block (+ (get start-block loan) (get duration loan)))
+      (blocks-until-expiry (- loan-end-block current-block))
+    )
+    (ok {
+      eligible: (and 
+        (get enabled renewal-settings)
+        (is-eq (get status loan) "ACTIVE")
+        (<= blocks-until-expiry u1000)
+        (< (get renewal-count renewal-history) (get max-renewals renewal-settings))
+      ),
+      blocks-until-expiry: blocks-until-expiry,
+      renewals-remaining: (- (get max-renewals renewal-settings) (get renewal-count renewal-history))
+    })
+  )
+)
+
+(define-public (set-renewal-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= new-fee u200) ERR-INVALID-AMOUNT)
+    (var-set renewal-fee new-fee)
+    (ok true)
+  )
+)
+
+(define-public (set-max-auto-renewals (new-max uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= new-max u10) ERR-INVALID-AMOUNT)
+    (var-set max-auto-renewals new-max)
+    (ok true)
+  )
+)
+
+(define-read-only (get-loans-pending-renewal (borrower principal))
+  (let
+    (
+      (renewal-settings (unwrap! (map-get? auto-renewal-settings { borrower: borrower }) ERR-NOT-AUTHORIZED))
+    )
+    (ok (get enabled renewal-settings))
+  )
+)
