@@ -5,11 +5,24 @@ authors = []
 telemetry = true
 cache_dir = '.\.cache'
 requirements = []
-[contracts.NFTL]
-path = 'contracts/NFTL.clar'
+
+[repl.analysis]
+passes = ['check_checker']
+
+[contracts.achievement-system]
+path = 'contracts/achievement-system.clar'
 clarity_version = 3
 epoch = 3.1
-[repl.analysis]
+
+[contracts.credit-scoring]
+path = 'contracts/credit-scoring.clar'
+clarity_version = 3
+epoch = 3.1
+
+[repl.achievement-system]
+passes = ['check_checker']
+
+[repl.credit-scoring]
 passes = ['check_checker']
 
 [repl.analysis.check_checker]
@@ -17,3 +30,11 @@ strict = false
 trusted_sender = false
 trusted_caller = false
 callee_filter = false
+
+[contracts.nft-valuation-oracle]
+path = 'contracts/nft-valuation-oracle.clar'
+clarity_version = 3
+epoch = 3.1
+
+[repl.nft-valuation-oracle]
+passes = ['check_checker']

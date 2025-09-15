@@ -50,8 +50,18 @@ plan:
     - id: 0
       transactions:
         - emulated-contract-publish:
-            contract-name: NFTL
+            contract-name: achievement-system
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/NFTL.clar
+            path: "contracts\\achievement-system.clar"
+            clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: credit-scoring
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\credit-scoring.clar"
+            clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: nft-valuation-oracle
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\nft-valuation-oracle.clar"
             clarity-version: 3
       epoch: "3.1"
